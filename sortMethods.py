@@ -2,7 +2,8 @@ import time
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-import concurrent.futures
+import multiprocessing
+
 
 from insertion import insertion
 from selection import selection
@@ -11,7 +12,14 @@ from merge import merge_sort
 from heap import heap
 
 
-def arrayType(size, typeArray):
+
+def readInput(filename): # lê o arquivo input
+    with open(filename, 'r') as file:
+        lines = file.readlines()
+    return [line.strip().split(',') for line in lines if line.strip()]
+
+
+def arrayType(size, typeArray): # verifica no input qual tipo de array é
     if typeArray == "OrdC":
         return list(range(size))
     elif typeArray == "OrdD":
@@ -22,38 +30,45 @@ def arrayType(size, typeArray):
         raise ValueError(f"Tipo de vetor desconhecido: {typeArray}")
 
 
-def readInput(filename):
-    with open(filename, 'r') as file:
-        lines = file.readlines()
-    return [line.strip().split(',') for line in lines if line.strip()]
-
-
-def callSortMethod(method, array, timeout_seconds=7200):
-    def run():
-        if method == "Insert":
-            return insertion(array)
-        elif method == "Shell":
-            return shell(array)
-        elif method == "Select":
-            return selection(array)
-        elif method == "Merge":
-            return merge_sort(array)
-        elif method == "Heap":
-            return heap(array)
-        else:
-            raise ValueError(f"Método desconhecido: {method}")
-
-    with concurrent.futures.ThreadPoolExecutor(
-            max_workers=1) as executor:  # pula o algoritmo depois de passar de 2h rodando
-        future = executor.submit(run)
+def callSortMethod(method, array, timeout_seconds=7200): # chama os métodos importados com base no nome do método
+    def run_sort(queue, method, array):
         try:
-            return future.result(timeout=timeout_seconds)
-        except concurrent.futures.TimeoutError:
-            print(f"[TIMEOUT] Método {method} com vetor de tamanho {len(array)} excedeu {timeout_seconds} segundos.")
-            return None, None
+            if method == "Insert":
+                result = insertion(array)
+            elif method == "Shell":
+                result = shell(array)
+            elif method == "Select":
+                result = selection(array)
+            elif method == "Merge":
+                result = merge_sort(array)
+            elif method == "Heap":
+                result = heap(array)
+            else:
+                raise ValueError(f"Método desconhecido: {method}")
+            queue.put(result)
+        except Exception as e:
+            queue.put((None, None))
+            print(f"[ERRO] {method}: {e}")
+
+    queue = multiprocessing.Queue() # divide numa fila de processos, caso algum passe de 2h rodando, escreve o resultado e pula para o próximo
+    process = multiprocessing.Process(target=run_sort, args=(queue, method, array))
+    process.start()
+    process.join(timeout_seconds)
+
+    if process.is_alive(): # mata o processo, antes gerava erro de freezing do código
+        process.terminate()
+        process.join()
+        print(f"[TIMEOUT] Método {method} com vetor de tamanho {len(array)} excedeu {timeout_seconds} segundos.")
+        return None, None
+
+    if not queue.empty():
+        return queue.get()
+    else:
+        return None, None
 
 
-def writeOutput(results, filename='output.txt'):
+
+def writeOutput(results, filename='output.txt'): # escreve o resultado, caso tenha gerado timeout, informações nulas
     with open(filename, 'w') as f:
         f.write("+----------------+---------+-------------+----------+-------------+-----------+\n")
         f.write("|     Method     |   Size  | Vector Type | Time (s) | Comparisons | Movements |\n")
@@ -70,7 +85,7 @@ def writeOutput(results, filename='output.txt'):
         f.write("+----------------+---------+-------------+----------+-------------+-----------+\n")
 
 
-def plotResults(results):
+def plotResults(results): # plota os resultados para cada tamanho de vetor
     sizes = [100, 1000, 10000, 1000000]
     arrayTypes = ['OrdA', 'OrdC', 'OrdD']
     methods = ['Insert', 'Shell', 'Select', 'Merge', 'Heap']
@@ -177,13 +192,12 @@ def main():
     inputs = readInput(file)
     results = []
 
-    print("Executando algoritmos de ordenação...")
     for instruction in inputs:
-        if len(instruction) != 3:
+        if len(instruction) != 3: # input diferente considera inválido
             print(f"Linha inválida: {instruction}")
             continue
 
-        method, size, vector_type = instruction
+        method, size, arrType = instruction
         try:
             size = int(size)
         except ValueError:
@@ -191,8 +205,8 @@ def main():
             continue
 
         print("============================================================================")
-        print(f"Executando {method} com tamanho={size} tipo={vector_type}")
-        array = arrayType(size, vector_type)
+        print(f"Executando {method} com tamanho={size} tipo={arrType}")
+        array = arrayType(size, arrType)
         start = time.time()
         comparisons, movements = callSortMethod(method, list(array))
         end = time.time()
@@ -201,26 +215,24 @@ def main():
             results.append({
                 'method': method,
                 'size': size,
-                'vector_type': vector_type,
+                'vector_type': arrType,
                 'time': None,
                 'comparisons': '',
                 'movements': ''
             })
             continue
 
-        elapsed_time = end - start
+        totalTime = end - start
 
         results.append({
             'method': method,
             'size': size,
-            'vector_type': vector_type,
-            'time': elapsed_time,
+            'vector_type': arrType,
+            'time': totalTime,
             'comparisons': comparisons,
             'movements': movements
         })
-
     writeOutput(results)
-    print("Resultados salvos em output.txt")
 
     print("Gerando gráficos comparativos...")
     plotResults(results)
