@@ -2,6 +2,7 @@ import time
 import random
 import matplotlib.pyplot as plt
 import numpy as np
+import concurrent.futures
 
 from insertion import insertion
 from selection import selection
@@ -10,114 +11,123 @@ from merge import merge_sort
 from heap import heap
 
 
-def generate_vector(size, vector_type): # verifica o input procurando o tipo de ordenação
-    if vector_type == "OrdC":
+def arrayType(size, typeArray):
+    if typeArray == "OrdC":
         return list(range(size))
-    elif vector_type == "OrdD":
+    elif typeArray == "OrdD":
         return list(range(size, 0, -1))
-    elif vector_type == "OrdA":
+    elif typeArray == "OrdA":
         return random.sample(range(size * 10), size)
     else:
-        raise ValueError(f"Tipo de vetor desconhecido: {vector_type}")
+        raise ValueError(f"Tipo de vetor desconhecido: {typeArray}")
 
 
-def read_input_file(filename): # lê o input
+def readInput(filename):
     with open(filename, 'r') as file:
         lines = file.readlines()
     return [line.strip().split(',') for line in lines if line.strip()]
 
 
-def format_method_name(name):
-    return {
-        "Insert": "Insertion Sort",
-        "Shell": "Shell Sort",
-        "Select": "Selection Sort",
-        "Merge": "Merge Sort",
-        "Heap": "Heap Sort"
-    }.get(name, "Unknown")
+def callSortMethod(method, array, timeout_seconds=7200):
+    def run():
+        if method == "Insert":
+            return insertion(array)
+        elif method == "Shell":
+            return shell(array)
+        elif method == "Select":
+            return selection(array)
+        elif method == "Merge":
+            return merge_sort(array)
+        elif method == "Heap":
+            return heap(array)
+        else:
+            raise ValueError(f"Método desconhecido: {method}")
+
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=1) as executor:  # pula o algoritmo depois de passar de 2h rodando
+        future = executor.submit(run)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            print(f"[TIMEOUT] Método {method} com vetor de tamanho {len(array)} excedeu {timeout_seconds} segundos.")
+            return None, None
 
 
-def call_sort_function(method, array): # chama os métodos
-    if method == "Insert":
-        return insertion(array)
-    elif method == "Shell":
-        return shell(array)
-    elif method == "Select":
-        return selection(array)
-    elif method == "Merge":
-        return merge_sort(array)
-    elif method == "Heap":
-        return heap(array)
-    else:
-        raise ValueError(f"Método desconhecido: {method}")
-
-
-def write_output_file(results, filename='output.txt'): # gera a tabela com os resultados
+def writeOutput(results, filename='output.txt'):
     with open(filename, 'w') as f:
         f.write("+----------------+---------+-------------+----------+-------------+-----------+\n")
         f.write("|     Method     |   Size  | Vector Type | Time (s) | Comparisons | Movements |\n")
         f.write("+----------------+---------+-------------+----------+-------------+-----------+\n")
         for result in results:
-            f.write("| {:14} | {:7} | {:11} | {:8.2e} | {:11} | {:9} |\n".format(
+            f.write("| {:14} | {:7} | {:11} | {:>8} | {:>11} | {:>9} |\n".format(
                 result['method'],
                 result['size'],
                 result['vector_type'],
-                result['time'],
-                result['comparisons'],
-                result['movements']
+                f"{result['time']:.10f}" if result['time'] is not None else "TIMEOUT",
+                result['comparisons'] if result['comparisons'] != '' else 'N/A',
+                result['movements'] if result['movements'] != '' else 'N/A'
             ))
         f.write("+----------------+---------+-------------+----------+-------------+-----------+\n")
 
 
-def plot_comparison_results(results): # gráfico de comparações
-    # Organizar dados por tamanho
+def plotResults(results):
     sizes = [100, 1000, 10000, 1000000]
-    vector_types = ['OrdA', 'OrdC', 'OrdD']
-    methods = ['Insertion Sort', 'Shell Sort', 'Selection Sort', 'Merge Sort', 'Heap Sort']
+    arrayTypes = ['OrdA', 'OrdC', 'OrdD']
+    methods = ['Insert', 'Shell', 'Select', 'Merge', 'Heap']
 
-    # organiza a plotagem entre comparações e movimentos
     data = {}
     for size in sizes:
         data[size] = {}
-        for vtype in vector_types:
+        for vtype in arrayTypes:
             data[size][vtype] = {'comparisons': {}, 'movements': {}}
 
-    # preenche os dados dos resultados na plotagem
     for result in results:
         size = result['size']
         vtype = result['vector_type']
         method = result['method']
-        if size in sizes and vtype in vector_types:
+
+        # só processar se tem dados válidos (não timeout)
+        if (size in sizes and vtype in arrayTypes and
+                result['comparisons'] != '' and result['movements'] != ''):
             data[size][vtype]['comparisons'][method] = result['comparisons']
             data[size][vtype]['movements'][method] = result['movements']
 
+
+
     for size in sizes:
-        if not any(data[size][vtype]['comparisons'] for vtype in vector_types):
+        # verificar se há dados válidos para este tamanho
+        has_data = False
+        for vtype in arrayTypes:
+            if data[size][vtype]['comparisons']:
+                has_data = True
+                break
+
+        if not has_data:
             continue
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
         fig.suptitle(f'Comparações e Movimentações por Algoritmo (Tamanho: {size})', fontsize=14)
 
-        # Preparar dados para o gráfico
+        for vtype in ['OrdA', 'OrdC', 'OrdD']:
+            if data[size][vtype]['comparisons']:
+                break
+
         available_methods = []
         comparisons_data = []
         movements_data = []
 
-        # monta os gráficos se baseando no ordenamento aleatório, caso não tenha isso no input, considera o ordenamento crescente
-        preferred_type = 'OrdA' if data[size]['OrdA']['comparisons'] else 'OrdC'
-
         for method in methods:
-            if method in data[size][preferred_type]['comparisons']:
-                available_methods.append(method.replace(' Sort', ''))
-                comparisons_data.append(data[size][preferred_type]['comparisons'][method])
-                movements_data.append(data[size][preferred_type]['movements'][method])
+            if method in data[size][vtype]['comparisons']:
+                available_methods.append(method)
+                comparisons_data.append(data[size][vtype]['comparisons'][method])
+                movements_data.append(data[size][vtype]['movements'][method])
 
         if not available_methods:
             continue
 
         x_pos = np.arange(len(available_methods))
 
-        # gráfico de comparações
+        # Gráfico de Comparações
         bars1 = ax1.bar(x_pos, comparisons_data, color='blue', alpha=0.7)
         ax1.set_title('Comparações')
         ax1.set_xlabel('Método')
@@ -126,7 +136,6 @@ def plot_comparison_results(results): # gráfico de comparações
         ax1.set_xticklabels(available_methods)
         ax1.grid(True, alpha=0.3)
 
-        # adicionar valores nas barras
         for bar, value in zip(bars1, comparisons_data):
             height = bar.get_height()
             ax1.annotate(f'{value:,}',
@@ -136,7 +145,7 @@ def plot_comparison_results(results): # gráfico de comparações
                          ha='center', va='bottom',
                          fontsize=8)
 
-        # gráfico de movimentações
+        # Gráfico de Movimentações
         bars2 = ax2.bar(x_pos, movements_data, color='red', alpha=0.7)
         ax2.set_title('Movimentações')
         ax2.set_xlabel('Método')
@@ -145,19 +154,17 @@ def plot_comparison_results(results): # gráfico de comparações
         ax2.set_xticklabels(available_methods)
         ax2.grid(True, alpha=0.3)
 
-        # adicionar valores nas barras
         for bar, value in zip(bars2, movements_data):
             height = bar.get_height()
             ax2.annotate(f'{value:,}',
                          xy=(bar.get_x() + bar.get_width() / 2, height),
-                         xytext=(0, 3),  # 3 points vertical offset
+                         xytext=(0, 3),
                          textcoords="offset points",
                          ha='center', va='bottom',
                          fontsize=8)
 
-        # legenda com o tipo de array
         fig.text(0.02, 0.02,
-                 f'Tipo de vetor: {preferred_type} ({"Aleatório" if preferred_type == "OrdA" else "Crescente"})',
+                 f'Tipo de vetor: {vtype}',
                  fontsize=10, style='italic')
 
         plt.tight_layout()
@@ -166,33 +173,45 @@ def plot_comparison_results(results): # gráfico de comparações
 
 
 def main():
-    input_file = 'input.txt'
-    instructions = read_input_file(input_file)
+    file = 'input.txt'
+    inputs = readInput(file)
     results = []
 
     print("Executando algoritmos de ordenação...")
-    for instruction in instructions:
-        # verifica se o input tem 3 instruções
+    for instruction in inputs:
         if len(instruction) != 3:
             print(f"Linha inválida: {instruction}")
             continue
 
         method, size, vector_type = instruction
-        try: # verifica se o tamanho está conforme solicitado na prova 100 1000 10000 1000000
+        try:
             size = int(size)
         except ValueError:
             print(f"Tamanho inválido: {size}")
             continue
 
+        print("============================================================================")
         print(f"Executando {method} com tamanho={size} tipo={vector_type}")
-        array = generate_vector(size, vector_type)
+        array = arrayType(size, vector_type)
         start = time.time()
-        comparisons, movements = call_sort_function(method, list(array))
+        comparisons, movements = callSortMethod(method, list(array))
         end = time.time()
+
+        if comparisons is None or movements is None:
+            results.append({
+                'method': method,
+                'size': size,
+                'vector_type': vector_type,
+                'time': None,
+                'comparisons': '',
+                'movements': ''
+            })
+            continue
+
         elapsed_time = end - start
 
         results.append({
-            'method': format_method_name(method),
+            'method': method,
             'size': size,
             'vector_type': vector_type,
             'time': elapsed_time,
@@ -200,46 +219,19 @@ def main():
             'movements': movements
         })
 
-    write_output_file(results)
+    writeOutput(results)
     print("Resultados salvos em output.txt")
 
     print("Gerando gráficos comparativos...")
-    plot_comparison_results(results)
+    plotResults(results)
 
-    # Criar gráfico de escalabilidade
-    sizes = [100, 1000, 10000, 1000000]
-    vector_types = ['OrdA', 'OrdC', 'OrdD']
-    methods = ['Insertion Sort', 'Shell Sort', 'Selection Sort', 'Merge Sort', 'Heap Sort']
-
-    # Organizar dados
-    data = {}
-    for size in sizes:
-        data[size] = {}
-        for vtype in vector_types:
-            data[size][vtype] = {'comparisons': {}, 'movements': {}}
-
-    for result in results:
-        size = result['size']
-        vtype = result['vector_type']
-        method = result['method']
-        if size in sizes and vtype in vector_types:
-            data[size][vtype]['comparisons'][method] = result['comparisons']
-            data[size][vtype]['movements'][method] = result['movements']
-
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57']
-    method_colors = {method: colors[i] for i, method in enumerate(methods)}
-
-    print("Gráficos salvos como:")
-    print("- sorting_comparison_100.png")
-    print("- sorting_comparison_1000.png")
-    print("- sorting_comparison_10000.png")
-    print("- sorting_comparison_1000000.png")
     print("################ CONFIGS DO PC ################")
     print("SO: Fedora")
     print("CPU: Intel Core i5-12450HX")
     print("RAM: 16GB")
-    print("Python: 3.10.1")
+    print("Python: 3.13")
     print("################################################")
+
 
 if __name__ == "__main__":
     main()
